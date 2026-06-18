@@ -201,5 +201,6 @@ export function parseRawEmail(rawEmail, options = {}) {
 }
 
 export function isLocalDomain(email) {
-  return String(email || "").toLowerCase().endsWith(`@${config.emailDomain.toLowerCase()}`);
+  const lowerEmail = String(email || "").toLowerCase();
+  return config.emailDomains.some((domain) => lowerEmail.endsWith(`@${domain}`));
 }

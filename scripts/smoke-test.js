@@ -8,6 +8,7 @@ const server = spawn(process.execPath, ["src/server.js"], {
   env: {
     ...process.env,
     PORT: String(port),
+    EMAIL_DOMAINS: "belfellah.tech,belf.me,mailforges.email",
     STORAGE_DRIVER: "json",
     DATA_FILE: "data/smoke-db.json"
   },
@@ -70,6 +71,16 @@ try {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: "test" })
   });
+  const createdSecondDomain = await request("/api/emails", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "test", domain: "belf.me" })
+  });
+  const createdThirdDomain = await request("/api/emails", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "test", domain: "mailforges.email" })
+  });
 
   const sampleEmail = await fs.readFile("sample-email.eml", "utf8");
   const sampleMultipartEmail = await fs.readFile("sample-multipart-email.eml", "utf8");
@@ -90,6 +101,14 @@ try {
 
   if (created.email !== "test@belfellah.tech") {
     throw new Error(`Unexpected email alias: ${created.email}`);
+  }
+
+  if (createdSecondDomain.email !== "test@belf.me") {
+    throw new Error(`Unexpected second-domain alias: ${createdSecondDomain.email}`);
+  }
+
+  if (createdThirdDomain.email !== "test@mailforges.email") {
+    throw new Error(`Unexpected third-domain alias: ${createdThirdDomain.email}`);
   }
 
   if (ingested.message.subject !== "Your Instagram code is 123456") {

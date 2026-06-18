@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-DOMAIN="${1:-belfellah.tech}"
+DOMAINS="${1:-belfellah.tech,belf.me,mailforges.email}"
+DOMAIN="$(printf '%s' "${DOMAINS}" | cut -d, -f1)"
 APP_DIR="/opt/private-email-server"
 PIPE_USER="emailpipe"
 ENV_DIR="/etc/private-email-server"
@@ -25,6 +26,7 @@ cat > "${ENV_FILE}" <<EOF
 PORT=3000
 HOST=127.0.0.1
 EMAIL_DOMAIN=${DOMAIN}
+EMAIL_DOMAINS=${DOMAINS}
 STORAGE_DRIVER=sqlite
 DATA_FILE=${APP_DIR}/data/email-server.sqlite
 MESSAGES_PER_ADDRESS=10

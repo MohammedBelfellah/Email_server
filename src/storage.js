@@ -39,7 +39,7 @@ async function ensureSqliteDb() {
     CREATE TABLE IF NOT EXISTS email_addresses (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
-      local_part TEXT NOT NULL UNIQUE,
+      local_part TEXT NOT NULL,
       label TEXT NOT NULL DEFAULT '',
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
@@ -58,6 +58,42 @@ async function ensureSqliteDb() {
 
     CREATE INDEX IF NOT EXISTS idx_messages_to_email_received_at
       ON messages (to_email, received_at DESC);
+  `);
+
+  await migrateEmailAddressLocalPartUnique();
+}
+
+async function migrateEmailAddressLocalPartUnique() {
+  const rows = await sqliteExec(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'email_addresses';",
+    { json: true }
+  );
+  const createSql = rows[0]?.sql || "";
+
+  if (!/local_part\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(createSql)) {
+    return;
+  }
+
+  await sqliteExec(`
+    BEGIN;
+
+    CREATE TABLE email_addresses_new (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      local_part TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+
+    INSERT OR IGNORE INTO email_addresses_new (id, email, local_part, label, active, created_at)
+    SELECT id, email, local_part, label, active, created_at
+    FROM email_addresses;
+
+    DROP TABLE email_addresses;
+    ALTER TABLE email_addresses_new RENAME TO email_addresses;
+
+    COMMIT;
   `);
 }
 
@@ -92,10 +128,30 @@ async function writeJsonDb(db) {
 }
 
 export function normalizeLocalPart(name) {
-  return String(name || "")
-    .trim()
-    .toLowerCase()
-    .replace(new RegExp(`@${config.emailDomain.replaceAll(".", "\\.")}$`, "i"), "");
+  let localPart = String(name || "").trim().toLowerCase();
+
+  for (const domain of config.emailDomains) {
+    localPart = localPart.replace(new RegExp(`@${domain.replaceAll(".", "\\.")}$`, "i"), "");
+  }
+
+  return localPart;
+}
+
+export function normalizeDomain(domain) {
+  return String(domain || config.emailDomain).trim().toLowerCase();
+}
+
+export function validateDomain(domain) {
+  const normalizedDomain = normalizeDomain(domain);
+
+  if (!config.emailDomains.includes(normalizedDomain)) {
+    return {
+      ok: false,
+      error: `Domain must be one of: ${config.emailDomains.join(", ")}.`
+    };
+  }
+
+  return { ok: true, domain: normalizedDomain };
 }
 
 export function validateLocalPart(name) {
@@ -143,13 +199,18 @@ function mapMessage(row) {
   };
 }
 
-export async function createEmailAddress(name, label = "") {
+export async function createEmailAddress(name, label = "", domain = config.emailDomain) {
   const validation = validateLocalPart(name);
   if (!validation.ok) {
     return validation;
   }
 
-  const email = `${validation.localPart}@${config.emailDomain}`;
+  const domainValidation = validateDomain(domain);
+  if (!domainValidation.ok) {
+    return domainValidation;
+  }
+
+  const email = `${validation.localPart}@${domainValidation.domain}`;
 
   if (isSqlite) {
     await ensureSqliteDb();
@@ -303,7 +364,8 @@ export async function listExplicitEmailAddresses() {
 }
 
 export async function listMessages(localPart) {
-  const wanted = `${normalizeLocalPart(localPart)}@${config.emailDomain}`;
+  const value = String(localPart || "").trim().toLowerCase();
+  const wanted = value.includes("@") ? value : `${normalizeLocalPart(value)}@${config.emailDomain}`;
 
   if (isSqlite) {
     await ensureSqliteDb();

@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-DOMAIN="${1:-belfellah.tech}"
+DOMAINS="${1:-belfellah.tech,belf.me,mailforges.email}"
+DOMAIN="$(printf '%s' "${DOMAINS}" | cut -d, -f1)"
 HOSTNAME="mail.${DOMAIN}"
 APP_DIR="/opt/private-email-server"
 PIPE_USER="emailpipe"
@@ -16,15 +17,19 @@ chmod 755 "${APP_DIR}"
 chmod 755 "${APP_DIR}/scripts"
 chmod 755 "${APP_DIR}/scripts/postfix-wrapper.sh"
 
-cat > /etc/postfix/virtual_mailbox_regexp <<EOF
-/^.+@${DOMAIN}\$/ anything
-EOF
+DOMAINS_SPACE="$(printf '%s' "${DOMAINS}" | tr ',' ' ')"
+
+: > /etc/postfix/virtual_mailbox_regexp
+for domain in ${DOMAINS_SPACE}; do
+  escaped_domain="$(printf '%s' "${domain}" | sed 's/\./\\./g')"
+  printf '/^.+@%s$/ anything\n' "${escaped_domain}" >> /etc/postfix/virtual_mailbox_regexp
+done
 
 postconf -e "myhostname = ${HOSTNAME}"
 postconf -e "mydomain = ${DOMAIN}"
 postconf -e 'myorigin = $mydomain'
 postconf -e 'mydestination = localhost.$mydomain, localhost'
-postconf -e "virtual_mailbox_domains = ${DOMAIN}"
+postconf -e "virtual_mailbox_domains = ${DOMAINS_SPACE}"
 postconf -e "virtual_mailbox_maps = regexp:/etc/postfix/virtual_mailbox_regexp"
 postconf -e "virtual_transport = emailpipe"
 postconf -e "smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination"

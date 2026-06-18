@@ -29,7 +29,7 @@ function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Ingest-Secret",
+    "Access-Control-Allow-Headers": "Content-Type, X-Ingest-Secret, X-Dashboard-Token",
     "Content-Type": "application/json; charset=utf-8"
   });
   res.end(body);
@@ -109,7 +109,8 @@ async function handleRequest(req, res) {
       return sendJson(res, 200, {
         ok: true,
         service: "private-email-server",
-        domain: config.emailDomain
+        domain: config.emailDomain,
+        domains: config.emailDomains
       });
     }
 
@@ -126,9 +127,16 @@ async function handleRequest(req, res) {
       return sendJson(res, 401, { error: "Invalid dashboard token." });
     }
 
+    if (req.method === "GET" && urlPath === "/api/domains") {
+      return sendJson(res, 200, {
+        defaultDomain: config.emailDomain,
+        domains: config.emailDomains
+      });
+    }
+
     if (req.method === "POST" && urlPath === "/api/emails") {
       const body = await readJson(req);
-      const result = await createEmailAddress(body.name, body.label);
+      const result = await createEmailAddress(body.name, body.label, body.domain);
 
       if (!result.ok) {
         return sendJson(res, 400, { error: result.error });
@@ -151,10 +159,14 @@ async function handleRequest(req, res) {
 
     const inboxMatch = urlPath.match(/^\/api\/emails\/([^/]+)\/messages$/);
     if (req.method === "GET" && inboxMatch) {
-      const localPart = normalizeLocalPart(decodeURIComponent(inboxMatch[1]));
+      const emailOrLocalPart = decodeURIComponent(inboxMatch[1]);
+      const localPart = normalizeLocalPart(emailOrLocalPart);
+      const domain = emailOrLocalPart.includes("@")
+        ? emailOrLocalPart.split("@").at(-1).toLowerCase()
+        : config.emailDomain;
       return sendJson(res, 200, {
-        email: `${localPart}@${config.emailDomain}`,
-        messages: await listMessages(localPart)
+        email: emailOrLocalPart.includes("@") ? emailOrLocalPart.toLowerCase() : `${localPart}@${domain}`,
+        messages: await listMessages(emailOrLocalPart)
       });
     }
 
@@ -173,7 +185,7 @@ async function handleRequest(req, res) {
       }
 
       if (!isLocalDomain(parsed.toEmail)) {
-        return sendJson(res, 400, { error: `Recipient must be @${config.emailDomain}.` });
+        return sendJson(res, 400, { error: `Recipient must use one of: ${config.emailDomains.join(", ")}.` });
       }
 
       const saved = await saveMessage(parsed);

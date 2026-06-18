@@ -40,6 +40,12 @@ Production storage uses SQLite:
 STORAGE_DRIVER=sqlite DATA_FILE=data/email-server.sqlite node src/server.js
 ```
 
+Multiple receiving domains:
+
+```bash
+EMAIL_DOMAINS=belfellah.tech,belf.me,mailforges.email
+```
+
 Production dashboard URL:
 
 ```text

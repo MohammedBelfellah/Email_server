@@ -1,8 +1,10 @@
 const state = {
   token: localStorage.getItem("dashboardToken") || "",
+  domains: ["belfellah.tech"],
+  defaultDomain: "belfellah.tech",
   aliases: [],
   messages: [],
-  selectedAlias: "",
+  selectedEmail: "",
   selectedMessageId: "",
   isRefreshing: false
 };
@@ -12,6 +14,7 @@ const elements = {
   tokenInput: document.querySelector("#tokenInput"),
   aliasForm: document.querySelector("#aliasForm"),
   aliasInput: document.querySelector("#aliasInput"),
+  domainSelect: document.querySelector("#domainSelect"),
   aliasList: document.querySelector("#aliasList"),
   messageList: document.querySelector("#messageList"),
   messageDetail: document.querySelector("#messageDetail"),
@@ -80,7 +83,7 @@ function formatDate(value) {
 function renderAliases() {
   const allButton = document.createElement("button");
   allButton.type = "button";
-  allButton.className = `alias-item ${state.selectedAlias ? "" : "active"}`;
+  allButton.className = `alias-item ${state.selectedEmail ? "" : "active"}`;
   allButton.innerHTML = "<span>Recent messages</span><small>all</small>";
   allButton.addEventListener("click", () => loadRecentMessages());
 
@@ -88,13 +91,13 @@ function renderAliases() {
     allButton,
     ...state.aliases.map((alias) => {
       const row = document.createElement("div");
-      row.className = `alias-row ${state.selectedAlias === alias.localPart ? "active" : ""}`;
+      row.className = `alias-row ${state.selectedEmail === alias.email ? "active" : ""}`;
 
       const openButton = document.createElement("button");
       openButton.type = "button";
       openButton.className = "alias-open";
       openButton.innerHTML = `<span>${alias.email}</span><small>${alias.active ? "active" : "off"}</small>`;
-      openButton.addEventListener("click", () => loadInbox(alias.localPart));
+      openButton.addEventListener("click", () => loadInbox(alias.email));
 
       const copyButton = document.createElement("button");
       copyButton.type = "button";
@@ -108,6 +111,18 @@ function renderAliases() {
 
       row.replaceChildren(openButton, copyButton);
       return row;
+    })
+  );
+}
+
+function renderDomains() {
+  elements.domainSelect.replaceChildren(
+    ...state.domains.map((domain) => {
+      const option = document.createElement("option");
+      option.value = domain;
+      option.textContent = `@${domain}`;
+      option.selected = domain === state.defaultDomain;
+      return option;
     })
   );
 }
@@ -200,9 +215,16 @@ async function loadAliases() {
   renderAliases();
 }
 
+async function loadDomains() {
+  const payload = await api("/api/domains");
+  state.domains = payload.domains;
+  state.defaultDomain = payload.defaultDomain;
+  renderDomains();
+}
+
 async function loadRecentMessages(options = {}) {
   const previousMessageId = state.selectedMessageId;
-  state.selectedAlias = "";
+  state.selectedEmail = "";
   elements.inboxTitle.textContent = "Recent messages";
   const payload = await api("/api/messages");
   state.messages = payload.messages;
@@ -215,11 +237,11 @@ async function loadRecentMessages(options = {}) {
   }
 }
 
-async function loadInbox(localPart, options = {}) {
+async function loadInbox(email, options = {}) {
   const previousMessageId = state.selectedMessageId;
-  state.selectedAlias = localPart;
-  elements.inboxTitle.textContent = `${localPart}@belfellah.tech`;
-  const payload = await api(`/api/emails/${encodeURIComponent(localPart)}/messages`);
+  state.selectedEmail = email;
+  elements.inboxTitle.textContent = email;
+  const payload = await api(`/api/emails/${encodeURIComponent(email)}/messages`);
   state.messages = payload.messages;
   state.selectedMessageId = options.preserveSelection ? previousMessageId : "";
   renderAliases();
@@ -236,6 +258,7 @@ async function boot() {
     return;
   }
 
+  await loadDomains();
   await loadAliases();
   await loadRecentMessages();
 }
@@ -265,12 +288,12 @@ elements.aliasForm.addEventListener("submit", async (event) => {
     const payload = await api("/api/emails", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, domain: elements.domainSelect.value })
     });
     elements.aliasInput.value = "";
     showToast(`Created ${payload.email}`);
     await loadAliases();
-    await loadInbox(payload.emailAddress.localPart);
+    await loadInbox(payload.emailAddress.email);
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -287,8 +310,8 @@ elements.refreshAliases.addEventListener("click", async () => {
 
 elements.refreshMessages.addEventListener("click", async () => {
   try {
-    if (state.selectedAlias) {
-      await loadInbox(state.selectedAlias);
+    if (state.selectedEmail) {
+      await loadInbox(state.selectedEmail);
     } else {
       await loadRecentMessages();
     }
@@ -315,8 +338,8 @@ window.setInterval(async () => {
 
   state.isRefreshing = true;
   try {
-    if (state.selectedAlias) {
-      await loadInbox(state.selectedAlias, { preserveSelection: true });
+    if (state.selectedEmail) {
+      await loadInbox(state.selectedEmail, { preserveSelection: true });
     } else {
       await loadRecentMessages({ preserveSelection: true });
     }
