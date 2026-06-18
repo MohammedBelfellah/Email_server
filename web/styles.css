@@ -522,7 +522,7 @@ select:focus {
 .admin-form {
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(0, 1fr) 120px auto;
+  grid-template-columns: minmax(0, 1fr) 120px 110px auto;
 }
 
 .domain-helper {
@@ -606,7 +606,7 @@ select:focus {
   border-radius: 8px;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(140px, 190px) minmax(0, 1fr) minmax(170px, auto);
+  grid-template-columns: minmax(140px, 190px) minmax(0, 1fr) minmax(230px, auto) minmax(170px, auto);
   padding: 12px;
 }
 
@@ -624,6 +624,18 @@ select:focus {
   padding: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.limit-editor {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto 76px auto;
+}
+
+.limit-editor input {
+  min-height: 34px;
+  padding: 0 8px;
 }
 
 .toast.error {
@@ -866,6 +878,10 @@ select:focus {
 
   .row-actions button {
     flex: 1;
+  }
+
+  .limit-editor {
+    grid-template-columns: 1fr;
   }
 
   .message-list,

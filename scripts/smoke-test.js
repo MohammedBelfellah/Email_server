@@ -69,7 +69,7 @@ try {
   const userResult = await request("/api/admin/users", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: "Smoke User", role: "user" })
+    body: JSON.stringify({ name: "Smoke User", role: "user", extraAliases: 1 })
   });
   const userHeaders = {
     "Content-Type": "application/json",
@@ -96,6 +96,23 @@ try {
     headers: userHeaders,
     body: JSON.stringify({ name: "htmltest" })
   });
+  await request("/api/emails", {
+    method: "POST",
+    headers: userHeaders,
+    body: JSON.stringify({ name: "extraone" })
+  });
+  await request("/api/emails", {
+    method: "POST",
+    headers: userHeaders,
+    body: JSON.stringify({ name: "extrasix" })
+  });
+
+  const overLimitResponse = await fetch(`${baseUrl}/api/emails`, {
+    method: "POST",
+    headers: userHeaders,
+    body: JSON.stringify({ name: "toomany" })
+  });
+  const overLimitBody = await overLimitResponse.json();
 
   const sampleEmail = await fs.readFile("sample-email.eml", "utf8");
   const sampleMultipartEmail = await fs.readFile("sample-multipart-email.eml", "utf8");
@@ -116,7 +133,11 @@ try {
   const htmlInbox = await request("/api/emails/htmltest/messages", {
     headers: { "X-Dashboard-Token": userResult.user.accessKey }
   });
-  const dashboard = await requestText("/");
+  await requestText("/");
+  const appScript = await requestText("/web/app.js");
+  const session = await request("/api/session", {
+    headers: { "X-Dashboard-Token": userResult.user.accessKey }
+  });
 
   if (created.email !== "test@belfellah.tech") {
     throw new Error(`Unexpected email alias: ${created.email}`);
@@ -142,6 +163,14 @@ try {
     throw new Error(`Expected 1 HTML inbox message, got ${htmlInbox.messages.length}`);
   }
 
+  if (session.user.maxAliases !== 6) {
+    throw new Error(`Expected maxAliases 6, got ${session.user.maxAliases}`);
+  }
+
+  if (overLimitResponse.ok || !overLimitBody.error.includes("maximum 6")) {
+    throw new Error(`Expected 7th alias to fail at limit 6, got ${JSON.stringify(overLimitBody)}`);
+  }
+
   if (!ingestedMultipart.message.htmlBody.includes("<strong>HTML</strong>")) {
     throw new Error("Expected multipart HTML body to be parsed.");
   }
@@ -150,7 +179,7 @@ try {
     throw new Error("Expected multipart text body to exclude MIME boundaries.");
   }
 
-  if (!dashboard.includes("Belfellah Inbox")) {
+  if (!appScript.includes("NotMyRealEmail")) {
     throw new Error("Dashboard HTML did not load.");
   }
 

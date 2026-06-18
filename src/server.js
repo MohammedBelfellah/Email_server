@@ -11,6 +11,7 @@ import {
   createUser,
   deleteUser,
   findUserByAccessKey,
+  getAliasLimitForUser,
   getSystemStats,
   isAdminUser,
   listAdminAliases,
@@ -19,7 +20,8 @@ import {
   listRecentMessages,
   listUsers,
   normalizeLocalPart,
-  saveMessage
+  saveMessage,
+  updateUserAliasExtra
 } from "./storage.js";
 
 const publicDir = path.resolve(process.cwd(), "web");
@@ -37,7 +39,7 @@ function sendJson(res, statusCode, payload) {
 
   res.writeHead(statusCode, {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Ingest-Secret, X-Dashboard-Token",
     "Content-Type": "application/json; charset=utf-8"
   });
@@ -145,6 +147,8 @@ function publicUser(user) {
     id: user.id,
     name: user.name,
     role: user.role,
+    extraAliases: user.extraAliases || 0,
+    maxAliases: user.maxAliases || config.maxAliasesPerUser,
     active: user.active,
     createdAt: user.createdAt
   };
@@ -212,9 +216,10 @@ async function handleRequest(req, res) {
       }
 
       const aliasCount = await countEmailAddressesForOwner(ownerUserId);
-      if (aliasCount >= config.maxAliasesPerUser) {
+      const aliasLimit = await getAliasLimitForUser(ownerUserId);
+      if (aliasCount >= aliasLimit) {
         return sendJson(res, 400, {
-          error: `This user already has the maximum ${config.maxAliasesPerUser} email addresses.`
+          error: `This user already has the maximum ${aliasLimit} email addresses.`
         });
       }
 
@@ -275,7 +280,8 @@ async function handleRequest(req, res) {
       const body = await readJson(req);
       const result = await createUser({
         name: body.name,
-        role: body.role || "user"
+        role: body.role || "user",
+        extraAliases: body.extraAliases || 0
       });
 
       if (!result.ok) {
@@ -285,13 +291,29 @@ async function handleRequest(req, res) {
       return sendJson(res, 201, { user: result.user });
     }
 
-    const deleteUserMatch = urlPath.match(/^\/api\/admin\/users\/([^/]+)$/);
-    if (req.method === "DELETE" && deleteUserMatch) {
+    const adminUserMatch = urlPath.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if (req.method === "PATCH" && adminUserMatch) {
       if (!isAdminUser(auth.user)) {
         return sendJson(res, 403, { error: "Admin access required." });
       }
 
-      const userId = decodeURIComponent(deleteUserMatch[1]);
+      const userId = decodeURIComponent(adminUserMatch[1]);
+      const body = await readJson(req);
+      const result = await updateUserAliasExtra(userId, body.extraAliases);
+
+      if (!result.ok) {
+        return sendJson(res, 400, { error: result.error });
+      }
+
+      return sendJson(res, 200, { user: result.user });
+    }
+
+    if (req.method === "DELETE" && adminUserMatch) {
+      if (!isAdminUser(auth.user)) {
+        return sendJson(res, 403, { error: "Admin access required." });
+      }
+
+      const userId = decodeURIComponent(adminUserMatch[1]);
       if (userId === auth.user.id) {
         return sendJson(res, 400, { error: "You cannot delete your own admin account." });
       }

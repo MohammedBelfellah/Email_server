@@ -202,6 +202,7 @@ function App() {
     const form = new FormData(formElement);
     const name = String(form.get("name") || "").trim();
     const role = String(form.get("role") || "user");
+    const extraAliases = Number(form.get("extraAliases") || 0);
 
     if (!name) {
       return;
@@ -211,7 +212,7 @@ function App() {
       const payload = await api("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, role })
+        body: JSON.stringify({ name, role, extraAliases })
       });
       formElement.reset();
       await loadAdminData();
@@ -238,6 +239,24 @@ function App() {
     }
   }
 
+  async function updateUserLimit(event, user) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const extraAliases = Number(form.get("extraAliases") || 0);
+
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extraAliases })
+      });
+      notify(`Updated ${user.name}`);
+      await loadAdminData();
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  }
+
   if (route === "landing") {
     return h(LandingPage);
   }
@@ -257,7 +276,7 @@ function App() {
     if (session.user.role !== "admin") {
       return h(AccessDenied, { logout, message: "This key is for a user account. Admin console requires an admin key." });
     }
-    return h(AdminApp, { session, domains, users, aliases: adminAliases, stats, createUser, deleteUser, copyText, logout, toast });
+    return h(AdminApp, { session, domains, users, aliases: adminAliases, stats, createUser, updateUserLimit, deleteUser, copyText, logout, toast });
   }
 
   if (session.user.role === "admin") {
@@ -315,7 +334,7 @@ function LoginPage({ route, tokenInput, setTokenInput, unlock, loading, toast })
       h("div", { className: "brand-mark large" }, "B"),
       h("p", { className: "eyebrow" }, isAdmin ? "Admin console" : "Private inbox"),
       h("h1", null, isAdmin ? "Manage users and addresses" : "Your disposable email workspace"),
-      h("p", { className: "hero-copy" }, isAdmin ? "Create accounts, copy access keys, and audit created addresses without reading inbox contents." : "Create up to five private addresses across the available domains and watch new messages arrive automatically."),
+      h("p", { className: "hero-copy" }, isAdmin ? "Create accounts, copy access keys, and audit created addresses without reading inbox contents." : "Create private addresses across the available domains and watch new messages arrive automatically."),
       h(
         "form",
         { className: "login-card", onSubmit: unlock },
@@ -329,7 +348,7 @@ function LoginPage({ route, tokenInput, setTokenInput, unlock, loading, toast })
         }),
         h("button", { type: "submit" }, loading ? "Checking..." : "Enter")
       ),
-      h("a", { className: "route-link", href: isAdmin ? "/" : "/admin" }, isAdmin ? "Go to user inbox" : "Go to admin console")
+      h("a", { className: "route-link", href: isAdmin ? "/dashboard" : "/admin" }, isAdmin ? "Go to user inbox" : "Go to admin console")
     ),
     toast && h("div", { className: `toast ${toast.type}`.trim() }, toast.message)
   );
@@ -344,7 +363,8 @@ function AccessDenied({ message, logout }) {
 }
 
 function UserApp(props) {
-  const remaining = Math.max(0, 5 - props.aliases.length);
+  const maxAliases = props.session.user.maxAliases || 5;
+  const remaining = Math.max(0, maxAliases - props.aliases.length);
 
   return h(
     "div",
@@ -384,8 +404,14 @@ function UserApp(props) {
   );
 }
 
-function AdminApp({ session, domains, users, aliases, stats, createUser, deleteUser, copyText, logout, toast }) {
+function AdminApp({ session, domains, users, aliases, stats, createUser, updateUserLimit, deleteUser, copyText, logout, toast }) {
   const usersById = new Map(users.map((user) => [user.id, user]));
+  const aliasCountByUser = new Map();
+  aliases.forEach((alias) => {
+    if (alias.ownerUserId) {
+      aliasCountByUser.set(alias.ownerUserId, (aliasCountByUser.get(alias.ownerUserId) || 0) + 1);
+    }
+  });
 
   return h(
     "div",
@@ -394,7 +420,7 @@ function AdminApp({ session, domains, users, aliases, stats, createUser, deleteU
       "header",
       { className: "admin-topbar" },
       h(Brand, { domains }),
-      h("nav", null, h("a", { href: "/" }, "User inbox"), h("button", { type: "button", onClick: logout }, "Logout"))
+      h("nav", null, h("a", { href: "/dashboard" }, "User inbox"), h("button", { type: "button", onClick: logout }, "Logout"))
     ),
     h(
       "main",
@@ -404,7 +430,7 @@ function AdminApp({ session, domains, users, aliases, stats, createUser, deleteU
         "section",
         { className: "admin-grid" },
         h("div", { className: "admin-panel" }, h("h3", null, "System"), h("div", { className: "stats-grid" }, h("div", null, h("strong", null, stats?.users ?? 0), h("span", null, "Users")), h("div", null, h("strong", null, stats?.aliases ?? 0), h("span", null, "Aliases")), h("div", null, h("strong", null, stats?.messages ?? 0), h("span", null, "Stored messages")))),
-        h("div", { className: "admin-panel" }, h("h3", null, "Create account"), h("form", { className: "admin-form", onSubmit: createUser }, h("input", { name: "name", placeholder: "Friend name" }), h("select", { name: "role" }, h("option", { value: "user" }, "User"), h("option", { value: "admin" }, "Admin")), h("button", { type: "submit" }, "Generate key"))),
+        h("div", { className: "admin-panel" }, h("h3", null, "Create account"), h("form", { className: "admin-form", onSubmit: createUser }, h("input", { name: "name", placeholder: "Friend name" }), h("select", { name: "role" }, h("option", { value: "user" }, "User"), h("option", { value: "admin" }, "Admin")), h("input", { name: "extraAliases", type: "number", min: "0", max: "500", placeholder: "Extra" }), h("button", { type: "submit" }, "Generate key"))),
         h(DomainSetupPanel, { copyText }),
         h(
           "div",
@@ -415,10 +441,17 @@ function AdminApp({ session, domains, users, aliases, stats, createUser, deleteU
             { className: "user-list" },
             users.map((user) =>
               h(
-                "div",
-                { key: user.id, className: "user-row" },
+                "form",
+                { key: user.id, className: "user-row", onSubmit: (event) => updateUserLimit(event, user) },
                 h("div", null, h("strong", null, user.name), h("span", null, user.role)),
                 h("code", null, user.accessKey),
+                h(
+                  "div",
+                  { className: "limit-editor" },
+                  h("span", null, `${aliasCountByUser.get(user.id) || 0}/${user.maxAliases || 5} used`),
+                  h("input", { name: "extraAliases", type: "number", min: "0", max: "500", defaultValue: user.extraAliases || 0 }),
+                  h("button", { type: "submit", className: "copy-button" }, "Save")
+                ),
                 h("div", { className: "row-actions" }, h("button", { type: "button", className: "copy-button", onClick: () => copyText(user.accessKey) }, "Copy key"), h("button", { type: "button", className: "danger-button", onClick: () => deleteUser(user) }, "Delete"))
               )
             )

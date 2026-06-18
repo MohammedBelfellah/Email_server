@@ -2,8 +2,9 @@ import { createUser } from "../src/storage.js";
 
 const name = process.argv[2] || "";
 const role = process.argv[3] || "user";
+const extraAliases = Number(process.argv[4] || 0);
 
-const result = await createUser({ name, role });
+const result = await createUser({ name, role, extraAliases });
 
 if (!result.ok) {
   console.error(result.error);

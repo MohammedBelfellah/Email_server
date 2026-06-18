@@ -52,6 +52,7 @@ async function ensureSqliteDb() {
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
       access_key TEXT NOT NULL UNIQUE,
+      extra_aliases INTEGER NOT NULL DEFAULT 0,
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     );
@@ -73,6 +74,7 @@ async function ensureSqliteDb() {
 
   await migrateEmailAddressLocalPartUnique();
   await migrateEmailAddressOwner();
+  await migrateUserExtraAliases();
 }
 
 async function migrateEmailAddressLocalPartUnique() {
@@ -115,6 +117,15 @@ async function migrateEmailAddressOwner() {
 
   if (!hasOwnerColumn) {
     await sqliteExec("ALTER TABLE email_addresses ADD COLUMN owner_user_id TEXT;");
+  }
+}
+
+async function migrateUserExtraAliases() {
+  const rows = await sqliteExec("PRAGMA table_info(users);", { json: true });
+  const hasExtraAliasesColumn = rows.some((row) => row.name === "extra_aliases");
+
+  if (!hasExtraAliasesColumn) {
+    await sqliteExec("ALTER TABLE users ADD COLUMN extra_aliases INTEGER NOT NULL DEFAULT 0;");
   }
 }
 
@@ -222,11 +233,14 @@ function mapMessage(row) {
 }
 
 function mapUser(row) {
+  const extraAliases = Math.max(0, Number(row.extraAliases || 0));
   return {
     id: row.id,
     name: row.name,
     role: row.role,
     accessKey: row.accessKey,
+    extraAliases,
+    maxAliases: config.maxAliasesPerUser + extraAliases,
     active: Boolean(row.active),
     createdAt: row.createdAt
   };
@@ -240,9 +254,14 @@ export function generateAccessKey(prefix = "key") {
   return `${prefix}_${crypto.randomBytes(24).toString("hex")}`;
 }
 
-export async function createUser({ name, role = "user", accessKey = "" }) {
+function normalizeExtraAliases(value) {
+  return Math.max(0, Math.min(500, Math.floor(Number(value) || 0)));
+}
+
+export async function createUser({ name, role = "user", accessKey = "", extraAliases = 0 }) {
   const normalizedName = String(name || "").trim();
   const normalizedRole = role === "admin" ? "admin" : "user";
+  const normalizedExtraAliases = normalizeExtraAliases(extraAliases);
 
   if (!normalizedName) {
     return { ok: false, error: "User name is required." };
@@ -253,6 +272,8 @@ export async function createUser({ name, role = "user", accessKey = "" }) {
     name: normalizedName,
     role: normalizedRole,
     accessKey: accessKey || generateAccessKey(normalizedRole),
+    extraAliases: normalizedExtraAliases,
+    maxAliases: config.maxAliasesPerUser + normalizedExtraAliases,
     active: true,
     createdAt: new Date().toISOString()
   };
@@ -260,12 +281,13 @@ export async function createUser({ name, role = "user", accessKey = "" }) {
   if (isSqlite) {
     await ensureSqliteDb();
     await sqliteExec(`
-      INSERT INTO users (id, name, role, access_key, active, created_at)
+      INSERT INTO users (id, name, role, access_key, extra_aliases, active, created_at)
       VALUES (
         ${textSql(user.id)},
         ${textSql(user.name)},
         ${textSql(user.role)},
         ${textSql(user.accessKey)},
+        ${user.extraAliases},
         1,
         ${textSql(user.createdAt)}
       );
@@ -290,6 +312,7 @@ export async function listUsers() {
           name,
           role,
           access_key AS accessKey,
+          extra_aliases AS extraAliases,
           active,
           created_at AS createdAt
         FROM users
@@ -301,7 +324,7 @@ export async function listUsers() {
   }
 
   const db = await readDb();
-  return db.users || [];
+  return (db.users || []).map(mapUser);
 }
 
 export async function findUserByAccessKey(accessKey) {
@@ -319,6 +342,7 @@ export async function findUserByAccessKey(accessKey) {
           name,
           role,
           access_key AS accessKey,
+          extra_aliases AS extraAliases,
           active,
           created_at AS createdAt
         FROM users
@@ -332,7 +356,66 @@ export async function findUserByAccessKey(accessKey) {
   }
 
   const db = await readDb();
-  return (db.users || []).find((user) => user.accessKey === key && user.active) || null;
+  const user = (db.users || []).find((item) => item.accessKey === key && item.active);
+  return user ? mapUser(user) : null;
+}
+
+export async function getAliasLimitForUser(userId) {
+  const id = String(userId || "").trim();
+
+  if (!id) {
+    return config.maxAliasesPerUser;
+  }
+
+  if (isSqlite) {
+    await ensureSqliteDb();
+    const rows = await sqliteExec(
+      `
+        SELECT extra_aliases AS extraAliases
+        FROM users
+        WHERE id = ${textSql(id)}
+        LIMIT 1;
+      `,
+      { json: true }
+    );
+    return config.maxAliasesPerUser + normalizeExtraAliases(rows[0]?.extraAliases);
+  }
+
+  const db = await readDb();
+  const user = (db.users || []).find((item) => item.id === id);
+  return config.maxAliasesPerUser + normalizeExtraAliases(user?.extraAliases);
+}
+
+export async function updateUserAliasExtra(userId, extraAliases) {
+  const id = String(userId || "").trim();
+  const normalizedExtraAliases = normalizeExtraAliases(extraAliases);
+
+  if (!id) {
+    return { ok: false, error: "User id is required." };
+  }
+
+  if (isSqlite) {
+    await ensureSqliteDb();
+    await sqliteExec(`
+      UPDATE users
+      SET extra_aliases = ${normalizedExtraAliases}
+      WHERE id = ${textSql(id)};
+    `);
+    const users = await listUsers();
+    const user = users.find((item) => item.id === id);
+    return user ? { ok: true, user } : { ok: false, error: "User not found." };
+  }
+
+  const db = await readDb();
+  db.users ||= [];
+  const user = db.users.find((item) => item.id === id);
+  if (!user) {
+    return { ok: false, error: "User not found." };
+  }
+  user.extraAliases = normalizedExtraAliases;
+  user.maxAliases = config.maxAliasesPerUser + normalizedExtraAliases;
+  await writeJsonDb(db);
+  return { ok: true, user };
 }
 
 export async function deleteUser(userId) {
