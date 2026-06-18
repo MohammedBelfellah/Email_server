@@ -66,20 +66,35 @@ try {
   await fs.rm("data/smoke-db.json", { force: true });
   await waitForServer();
 
-  const created = await request("/api/emails", {
+  const userResult = await request("/api/admin/users", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Smoke User", role: "user" })
+  });
+  const userHeaders = {
+    "Content-Type": "application/json",
+    "X-Dashboard-Token": userResult.user.accessKey
+  };
+
+  const created = await request("/api/emails", {
+    method: "POST",
+    headers: userHeaders,
     body: JSON.stringify({ name: "test" })
   });
   const createdSecondDomain = await request("/api/emails", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: userHeaders,
     body: JSON.stringify({ name: "test", domain: "belf.me" })
   });
   const createdThirdDomain = await request("/api/emails", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: userHeaders,
     body: JSON.stringify({ name: "test", domain: "mailforges.email" })
+  });
+  await request("/api/emails", {
+    method: "POST",
+    headers: userHeaders,
+    body: JSON.stringify({ name: "htmltest" })
   });
 
   const sampleEmail = await fs.readFile("sample-email.eml", "utf8");
@@ -95,8 +110,12 @@ try {
     body: sampleMultipartEmail
   });
 
-  const inbox = await request("/api/emails/test/messages");
-  const htmlInbox = await request("/api/emails/htmltest/messages");
+  const inbox = await request("/api/emails/test/messages", {
+    headers: { "X-Dashboard-Token": userResult.user.accessKey }
+  });
+  const htmlInbox = await request("/api/emails/htmltest/messages", {
+    headers: { "X-Dashboard-Token": userResult.user.accessKey }
+  });
   const dashboard = await requestText("/");
 
   if (created.email !== "test@belfellah.tech") {

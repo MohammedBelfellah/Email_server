@@ -16,6 +16,7 @@ export const config = {
   dataFile: process.env.DATA_FILE || "data/db.json",
   storageDriver: process.env.STORAGE_DRIVER || "json",
   messagesPerAddress: Number(process.env.MESSAGES_PER_ADDRESS || 10),
+  maxAliasesPerUser: Number(process.env.MAX_ALIASES_PER_USER || 5),
   ingestSecret: process.env.INGEST_SECRET || "",
   dashboardToken: process.env.DASHBOARD_TOKEN || ""
 };

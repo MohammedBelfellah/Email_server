@@ -5,10 +5,19 @@ import { URL } from "node:url";
 import { config } from "./config.js";
 import { isLocalDomain, parseRawEmail } from "./mail.js";
 import {
+  canAccessEmail,
+  countEmailAddressesForOwner,
   createEmailAddress,
+  createUser,
+  deleteUser,
+  findUserByAccessKey,
+  getSystemStats,
+  isAdminUser,
+  listAdminAliases,
   listEmailAddresses,
   listMessages,
   listRecentMessages,
+  listUsers,
   normalizeLocalPart,
   saveMessage
 } from "./storage.js";
@@ -28,7 +37,7 @@ function sendJson(res, statusCode, payload) {
 
   res.writeHead(statusCode, {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Ingest-Secret, X-Dashboard-Token",
     "Content-Type": "application/json; charset=utf-8"
   });
@@ -88,12 +97,57 @@ function requireIngestSecret(req) {
   return req.headers["x-ingest-secret"] === config.ingestSecret;
 }
 
-function requireDashboardToken(req) {
-  if (!config.dashboardToken) {
-    return true;
+async function authenticateDashboard(req) {
+  const token = String(req.headers["x-dashboard-token"] || "").trim();
+
+  if (config.dashboardToken && token === config.dashboardToken) {
+    return {
+      ok: true,
+      user: {
+        id: "bootstrap-admin",
+        name: "Owner",
+        role: "admin",
+        active: true,
+        createdAt: ""
+      },
+      bootstrap: true
+    };
   }
 
-  return req.headers["x-dashboard-token"] === config.dashboardToken;
+  const user = await findUserByAccessKey(token);
+  if (user) {
+    return { ok: true, user, bootstrap: false };
+  }
+
+  if (!config.dashboardToken && !token) {
+    return {
+      ok: true,
+      user: {
+        id: "dev-admin",
+        name: "Dev Admin",
+        role: "admin",
+        active: true,
+        createdAt: ""
+      },
+      bootstrap: true
+    };
+  }
+
+  return { ok: false, user: null, bootstrap: false };
+}
+
+function publicUser(user) {
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    name: user.name,
+    role: user.role,
+    active: user.active,
+    createdAt: user.createdAt
+  };
 }
 
 async function handleRequest(req, res) {
@@ -105,6 +159,12 @@ async function handleRequest(req, res) {
   }
 
   try {
+    let auth = { ok: false, user: null, bootstrap: false };
+
+    if (urlPath.startsWith("/api/")) {
+      auth = await authenticateDashboard(req);
+    }
+
     if (req.method === "GET" && urlPath === "/health") {
       return sendJson(res, 200, {
         ok: true,
@@ -114,7 +174,7 @@ async function handleRequest(req, res) {
       });
     }
 
-    if (req.method === "GET" && (urlPath === "/" || urlPath === "/dashboard")) {
+    if (req.method === "GET" && (urlPath === "/" || urlPath === "/dashboard" || urlPath === "/admin")) {
       return sendFile(res, path.join(publicDir, "index.html"));
     }
 
@@ -123,8 +183,15 @@ async function handleRequest(req, res) {
       return sendFile(res, path.join(publicDir, relativePath));
     }
 
-    if (urlPath.startsWith("/api/") && !requireDashboardToken(req)) {
+    if (urlPath.startsWith("/api/") && !auth.ok) {
       return sendJson(res, 401, { error: "Invalid dashboard token." });
+    }
+
+    if (req.method === "GET" && urlPath === "/api/session") {
+      return sendJson(res, 200, {
+        user: publicUser(auth.user),
+        bootstrap: auth.bootstrap
+      });
     }
 
     if (req.method === "GET" && urlPath === "/api/domains") {
@@ -136,7 +203,22 @@ async function handleRequest(req, res) {
 
     if (req.method === "POST" && urlPath === "/api/emails") {
       const body = await readJson(req);
-      const result = await createEmailAddress(body.name, body.label, body.domain);
+      const ownerUserId = isAdminUser(auth.user)
+        ? String(body.ownerUserId || "")
+        : auth.user.id;
+
+      if (!ownerUserId) {
+        return sendJson(res, 400, { error: "Choose an owner for this address." });
+      }
+
+      const aliasCount = await countEmailAddressesForOwner(ownerUserId);
+      if (aliasCount >= config.maxAliasesPerUser) {
+        return sendJson(res, 400, {
+          error: `This user already has the maximum ${config.maxAliasesPerUser} email addresses.`
+        });
+      }
+
+      const result = await createEmailAddress(body.name, body.label, body.domain, ownerUserId);
 
       if (!result.ok) {
         return sendJson(res, 400, { error: result.error });
@@ -149,12 +231,77 @@ async function handleRequest(req, res) {
     }
 
     if (req.method === "GET" && urlPath === "/api/emails") {
-      return sendJson(res, 200, { emails: await listEmailAddresses() });
+      return sendJson(res, 200, { emails: await listEmailAddresses(auth.user) });
     }
 
     if (req.method === "GET" && urlPath === "/api/messages") {
+      if (isAdminUser(auth.user)) {
+        return sendJson(res, 403, { error: "Admin accounts cannot read inbox message data." });
+      }
+
       const limit = Math.min(Number(url.searchParams.get("limit") || 50), 200);
-      return sendJson(res, 200, { messages: await listRecentMessages(limit) });
+      return sendJson(res, 200, { messages: await listRecentMessages(limit, auth.user) });
+    }
+
+    if (req.method === "GET" && urlPath === "/api/admin/stats") {
+      if (!isAdminUser(auth.user)) {
+        return sendJson(res, 403, { error: "Admin access required." });
+      }
+
+      return sendJson(res, 200, { stats: await getSystemStats() });
+    }
+
+    if (req.method === "GET" && urlPath === "/api/admin/users") {
+      if (!isAdminUser(auth.user)) {
+        return sendJson(res, 403, { error: "Admin access required." });
+      }
+
+      return sendJson(res, 200, { users: await listUsers() });
+    }
+
+    if (req.method === "GET" && urlPath === "/api/admin/aliases") {
+      if (!isAdminUser(auth.user)) {
+        return sendJson(res, 403, { error: "Admin access required." });
+      }
+
+      return sendJson(res, 200, { aliases: await listAdminAliases() });
+    }
+
+    if (req.method === "POST" && urlPath === "/api/admin/users") {
+      if (!isAdminUser(auth.user)) {
+        return sendJson(res, 403, { error: "Admin access required." });
+      }
+
+      const body = await readJson(req);
+      const result = await createUser({
+        name: body.name,
+        role: body.role || "user"
+      });
+
+      if (!result.ok) {
+        return sendJson(res, 400, { error: result.error });
+      }
+
+      return sendJson(res, 201, { user: result.user });
+    }
+
+    const deleteUserMatch = urlPath.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if (req.method === "DELETE" && deleteUserMatch) {
+      if (!isAdminUser(auth.user)) {
+        return sendJson(res, 403, { error: "Admin access required." });
+      }
+
+      const userId = decodeURIComponent(deleteUserMatch[1]);
+      if (userId === auth.user.id) {
+        return sendJson(res, 400, { error: "You cannot delete your own admin account." });
+      }
+
+      const result = await deleteUser(userId);
+      if (!result.ok) {
+        return sendJson(res, 400, { error: result.error });
+      }
+
+      return sendJson(res, 200, { ok: true });
     }
 
     const inboxMatch = urlPath.match(/^\/api\/emails\/([^/]+)\/messages$/);
@@ -164,9 +311,19 @@ async function handleRequest(req, res) {
       const domain = emailOrLocalPart.includes("@")
         ? emailOrLocalPart.split("@").at(-1).toLowerCase()
         : config.emailDomain;
+      const email = emailOrLocalPart.includes("@") ? emailOrLocalPart.toLowerCase() : `${localPart}@${domain}`;
+
+      if (isAdminUser(auth.user)) {
+        return sendJson(res, 403, { error: "Admin accounts cannot read inbox message data." });
+      }
+
+      if (!(await canAccessEmail(auth.user, email))) {
+        return sendJson(res, 403, { error: "You do not have access to this inbox." });
+      }
+
       return sendJson(res, 200, {
-        email: emailOrLocalPart.includes("@") ? emailOrLocalPart.toLowerCase() : `${localPart}@${domain}`,
-        messages: await listMessages(emailOrLocalPart)
+        email,
+        messages: await listMessages(emailOrLocalPart, auth.user)
       });
     }
 

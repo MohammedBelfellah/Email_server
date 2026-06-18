@@ -11,6 +11,7 @@ const isSqlite = config.storageDriver === "sqlite";
 
 const emptyDb = {
   emailAddresses: [],
+  users: [],
   messages: []
 };
 
@@ -40,7 +41,17 @@ async function ensureSqliteDb() {
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       local_part TEXT NOT NULL,
+      owner_user_id TEXT,
       label TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
+      access_key TEXT NOT NULL UNIQUE,
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     );
@@ -61,6 +72,7 @@ async function ensureSqliteDb() {
   `);
 
   await migrateEmailAddressLocalPartUnique();
+  await migrateEmailAddressOwner();
 }
 
 async function migrateEmailAddressLocalPartUnique() {
@@ -95,6 +107,15 @@ async function migrateEmailAddressLocalPartUnique() {
 
     COMMIT;
   `);
+}
+
+async function migrateEmailAddressOwner() {
+  const rows = await sqliteExec("PRAGMA table_info(email_addresses);", { json: true });
+  const hasOwnerColumn = rows.some((row) => row.name === "owner_user_id");
+
+  if (!hasOwnerColumn) {
+    await sqliteExec("ALTER TABLE email_addresses ADD COLUMN owner_user_id TEXT;");
+  }
 }
 
 async function ensureJsonDb() {
@@ -180,6 +201,7 @@ function mapEmailAddress(row) {
     id: row.id,
     email: row.email,
     localPart: row.localPart,
+    ownerUserId: row.ownerUserId || "",
     label: row.label,
     active: Boolean(row.active),
     createdAt: row.createdAt
@@ -199,7 +221,234 @@ function mapMessage(row) {
   };
 }
 
-export async function createEmailAddress(name, label = "", domain = config.emailDomain) {
+function mapUser(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    accessKey: row.accessKey,
+    active: Boolean(row.active),
+    createdAt: row.createdAt
+  };
+}
+
+export function isAdminUser(user) {
+  return user?.role === "admin";
+}
+
+export function generateAccessKey(prefix = "key") {
+  return `${prefix}_${crypto.randomBytes(24).toString("hex")}`;
+}
+
+export async function createUser({ name, role = "user", accessKey = "" }) {
+  const normalizedName = String(name || "").trim();
+  const normalizedRole = role === "admin" ? "admin" : "user";
+
+  if (!normalizedName) {
+    return { ok: false, error: "User name is required." };
+  }
+
+  const user = {
+    id: crypto.randomUUID(),
+    name: normalizedName,
+    role: normalizedRole,
+    accessKey: accessKey || generateAccessKey(normalizedRole),
+    active: true,
+    createdAt: new Date().toISOString()
+  };
+
+  if (isSqlite) {
+    await ensureSqliteDb();
+    await sqliteExec(`
+      INSERT INTO users (id, name, role, access_key, active, created_at)
+      VALUES (
+        ${textSql(user.id)},
+        ${textSql(user.name)},
+        ${textSql(user.role)},
+        ${textSql(user.accessKey)},
+        1,
+        ${textSql(user.createdAt)}
+      );
+    `);
+    return { ok: true, user };
+  }
+
+  const db = await readDb();
+  db.users ||= [];
+  db.users.push(user);
+  await writeJsonDb(db);
+  return { ok: true, user };
+}
+
+export async function listUsers() {
+  if (isSqlite) {
+    await ensureSqliteDb();
+    const rows = await sqliteExec(
+      `
+        SELECT
+          id,
+          name,
+          role,
+          access_key AS accessKey,
+          active,
+          created_at AS createdAt
+        FROM users
+        ORDER BY datetime(created_at) DESC;
+      `,
+      { json: true }
+    );
+    return rows.map(mapUser);
+  }
+
+  const db = await readDb();
+  return db.users || [];
+}
+
+export async function findUserByAccessKey(accessKey) {
+  const key = String(accessKey || "").trim();
+  if (!key) {
+    return null;
+  }
+
+  if (isSqlite) {
+    await ensureSqliteDb();
+    const rows = await sqliteExec(
+      `
+        SELECT
+          id,
+          name,
+          role,
+          access_key AS accessKey,
+          active,
+          created_at AS createdAt
+        FROM users
+        WHERE access_key = ${textSql(key)}
+          AND active = 1
+        LIMIT 1;
+      `,
+      { json: true }
+    );
+    return rows[0] ? mapUser(rows[0]) : null;
+  }
+
+  const db = await readDb();
+  return (db.users || []).find((user) => user.accessKey === key && user.active) || null;
+}
+
+export async function deleteUser(userId) {
+  const id = String(userId || "").trim();
+
+  if (!id) {
+    return { ok: false, error: "User id is required." };
+  }
+
+  if (isSqlite) {
+    await ensureSqliteDb();
+    await sqliteExec(`
+      DELETE FROM messages
+      WHERE to_email IN (
+        SELECT email FROM email_addresses WHERE owner_user_id = ${textSql(id)}
+      );
+      DELETE FROM email_addresses WHERE owner_user_id = ${textSql(id)};
+      DELETE FROM users WHERE id = ${textSql(id)};
+    `);
+    return { ok: true };
+  }
+
+  const db = await readDb();
+  const ownedEmails = new Set(db.emailAddresses.filter((item) => item.ownerUserId === id).map((item) => item.email));
+  db.messages = db.messages.filter((message) => !ownedEmails.has(message.toEmail));
+  db.emailAddresses = db.emailAddresses.filter((item) => item.ownerUserId !== id);
+  db.users = (db.users || []).filter((user) => user.id !== id);
+  await writeJsonDb(db);
+  return { ok: true };
+}
+
+export async function getSystemStats() {
+  if (isSqlite) {
+    await ensureSqliteDb();
+    const rows = await sqliteExec(
+      `
+        SELECT
+          (SELECT COUNT(*) FROM users) AS users,
+          (SELECT COUNT(*) FROM email_addresses) AS aliases,
+          (SELECT COUNT(*) FROM messages) AS messages;
+      `,
+      { json: true }
+    );
+    return rows[0] || { users: 0, aliases: 0, messages: 0 };
+  }
+
+  const db = await readDb();
+  return {
+    users: (db.users || []).length,
+    aliases: db.emailAddresses.length,
+    messages: db.messages.length
+  };
+}
+
+export async function countEmailAddressesForOwner(ownerUserId) {
+  const ownerId = String(ownerUserId || "");
+
+  if (!ownerId) {
+    return 0;
+  }
+
+  if (isSqlite) {
+    await ensureSqliteDb();
+    const rows = await sqliteExec(
+      `
+        SELECT COUNT(*) AS count
+        FROM email_addresses
+        WHERE owner_user_id = ${textSql(ownerId)};
+      `,
+      { json: true }
+    );
+    return Number(rows[0]?.count || 0);
+  }
+
+  const db = await readDb();
+  return db.emailAddresses.filter((item) => item.ownerUserId === ownerId).length;
+}
+
+export async function listAdminAliases() {
+  if (isSqlite) {
+    await ensureSqliteDb();
+    const rows = await sqliteExec(
+      `
+        SELECT
+          email_addresses.id,
+          email_addresses.email,
+          email_addresses.local_part AS localPart,
+          email_addresses.owner_user_id AS ownerUserId,
+          email_addresses.label,
+          email_addresses.active,
+          email_addresses.created_at AS createdAt,
+          users.name AS ownerName
+        FROM email_addresses
+        LEFT JOIN users ON users.id = email_addresses.owner_user_id
+        ORDER BY datetime(email_addresses.created_at) DESC;
+      `,
+      { json: true }
+    );
+    return rows.map((row) => ({
+      ...mapEmailAddress(row),
+      ownerName: row.ownerName || ""
+    }));
+  }
+
+  const db = await readDb();
+  const usersById = new Map((db.users || []).map((user) => [user.id, user]));
+  return db.emailAddresses
+    .slice()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .map((item) => ({
+      ...item,
+      ownerName: usersById.get(item.ownerUserId)?.name || ""
+    }));
+}
+
+export async function createEmailAddress(name, label = "", domain = config.emailDomain, ownerUserId = "") {
   const validation = validateLocalPart(name);
   if (!validation.ok) {
     return validation;
@@ -220,6 +469,7 @@ export async function createEmailAddress(name, label = "", domain = config.email
           id,
           email,
           local_part AS localPart,
+          owner_user_id AS ownerUserId,
           label,
           active,
           created_at AS createdAt
@@ -238,17 +488,19 @@ export async function createEmailAddress(name, label = "", domain = config.email
       id: crypto.randomUUID(),
       email,
       localPart: validation.localPart,
+      ownerUserId: String(ownerUserId || ""),
       label: String(label || ""),
       active: true,
       createdAt: new Date().toISOString()
     };
 
     await sqliteExec(`
-      INSERT INTO email_addresses (id, email, local_part, label, active, created_at)
+      INSERT INTO email_addresses (id, email, local_part, owner_user_id, label, active, created_at)
       VALUES (
         ${textSql(emailAddress.id)},
         ${textSql(emailAddress.email)},
         ${textSql(emailAddress.localPart)},
+        ${textSql(emailAddress.ownerUserId)},
         ${textSql(emailAddress.label)},
         1,
         ${textSql(emailAddress.createdAt)}
@@ -269,6 +521,7 @@ export async function createEmailAddress(name, label = "", domain = config.email
     id: crypto.randomUUID(),
     email,
     localPart: validation.localPart,
+    ownerUserId: String(ownerUserId || ""),
     label: String(label || ""),
     active: true,
     createdAt: new Date().toISOString()
@@ -280,9 +533,29 @@ export async function createEmailAddress(name, label = "", domain = config.email
   return { ok: true, emailAddress };
 }
 
-export async function listEmailAddresses() {
+export async function listEmailAddresses(user = null) {
   if (isSqlite) {
     await ensureSqliteDb();
+    if (user && !isAdminUser(user)) {
+      const rows = await sqliteExec(
+        `
+          SELECT
+            id,
+            email,
+            local_part AS localPart,
+            owner_user_id AS ownerUserId,
+            label,
+            active,
+            created_at AS createdAt
+          FROM email_addresses
+          WHERE owner_user_id = ${textSql(user.id)}
+          ORDER BY datetime(created_at) DESC;
+        `,
+        { json: true }
+      );
+      return rows.map(mapEmailAddress);
+    }
+
     const rows = await sqliteExec(
       `
         SELECT *
@@ -291,6 +564,7 @@ export async function listEmailAddresses() {
             id,
             email,
             local_part AS localPart,
+            owner_user_id AS ownerUserId,
             label,
             active,
             created_at AS createdAt,
@@ -303,6 +577,7 @@ export async function listEmailAddresses() {
             'observed:' || to_email AS id,
             to_email AS email,
             substr(to_email, 1, instr(to_email, '@') - 1) AS localPart,
+            '' AS ownerUserId,
             '' AS label,
             1 AS active,
             MAX(received_at) AS createdAt,
@@ -348,6 +623,7 @@ export async function listExplicitEmailAddresses() {
           id,
           email,
           local_part AS localPart,
+          owner_user_id AS ownerUserId,
           label,
           active,
           created_at AS createdAt
@@ -363,7 +639,43 @@ export async function listExplicitEmailAddresses() {
   return db.emailAddresses;
 }
 
-export async function listMessages(localPart) {
+function userMessageFilterSql(user) {
+  if (!user || isAdminUser(user)) {
+    return "";
+  }
+
+  return `
+    AND to_email IN (
+      SELECT email FROM email_addresses WHERE owner_user_id = ${textSql(user.id)}
+    )
+  `;
+}
+
+export async function canAccessEmail(user, email) {
+  if (!user || isAdminUser(user)) {
+    return true;
+  }
+
+  if (isSqlite) {
+    await ensureSqliteDb();
+    const rows = await sqliteExec(
+      `
+        SELECT id
+        FROM email_addresses
+        WHERE email = ${textSql(String(email || "").toLowerCase())}
+          AND owner_user_id = ${textSql(user.id)}
+        LIMIT 1;
+      `,
+      { json: true }
+    );
+    return Boolean(rows[0]);
+  }
+
+  const db = await readDb();
+  return db.emailAddresses.some((item) => item.email === email && item.ownerUserId === user.id);
+}
+
+export async function listMessages(localPart, user = null) {
   const value = String(localPart || "").trim().toLowerCase();
   const wanted = value.includes("@") ? value : `${normalizeLocalPart(value)}@${config.emailDomain}`;
 
@@ -382,6 +694,7 @@ export async function listMessages(localPart) {
           received_at AS receivedAt
         FROM messages
         WHERE to_email = ${textSql(wanted)}
+          ${userMessageFilterSql(user)}
         ORDER BY datetime(received_at) DESC, rowid DESC
         LIMIT ${Number(config.messagesPerAddress)};
       `,
@@ -391,13 +704,17 @@ export async function listMessages(localPart) {
   }
 
   const db = await readDb();
+  const allowedEmails = user && !isAdminUser(user)
+    ? new Set(db.emailAddresses.filter((item) => item.ownerUserId === user.id).map((item) => item.email))
+    : null;
   return db.messages
     .filter((message) => message.toEmail === wanted)
+    .filter((message) => !allowedEmails || allowedEmails.has(message.toEmail))
     .sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt))
     .slice(0, config.messagesPerAddress);
 }
 
-export async function listRecentMessages(limit = 50) {
+export async function listRecentMessages(limit = 50, user = null) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500));
 
   if (isSqlite) {
@@ -414,6 +731,8 @@ export async function listRecentMessages(limit = 50) {
           raw_email AS rawEmail,
           received_at AS receivedAt
         FROM messages
+        WHERE 1 = 1
+          ${userMessageFilterSql(user)}
         ORDER BY datetime(received_at) DESC, rowid DESC
         LIMIT ${safeLimit};
       `,
@@ -423,8 +742,12 @@ export async function listRecentMessages(limit = 50) {
   }
 
   const db = await readDb();
+  const allowedEmails = user && !isAdminUser(user)
+    ? new Set(db.emailAddresses.filter((item) => item.ownerUserId === user.id).map((item) => item.email))
+    : null;
   return db.messages
     .slice()
+    .filter((message) => !allowedEmails || allowedEmails.has(message.toEmail))
     .sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt))
     .slice(0, safeLimit);
 }

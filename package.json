@@ -8,7 +8,9 @@
     "test": "node scripts/smoke-test.js",
     "pipe": "node scripts/postfix-pipe.js",
     "reparse": "node scripts/reparse-db.js",
-    "migrate:sqlite": "node scripts/migrate-json-to-sqlite.js"
+    "migrate:sqlite": "node scripts/migrate-json-to-sqlite.js",
+    "user:create": "node scripts/create-user.js",
+    "user:delete": "node scripts/delete-user.js"
   },
   "engines": {
     "node": ">=20"
