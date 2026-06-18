@@ -290,24 +290,15 @@ function LandingPage() {
     h(
       "section",
       { className: "landing-hero" },
-      h("div", { className: "brand-mark large" }, "N"),
-      h("p", { className: "eyebrow" }, "Open source email tool"),
-      h("h1", null, "NotMyRealEmail ", "\u{1F602}"),
-      h("p", { className: "hero-copy" }, "A simple private inbox app for creating disposable email addresses across your own domains."),
-      h("p", { className: "landing-meta" }, "Built by Mohammed Belfellah. Free to use, study, and modify."),
+      h("h1", null, "NotMyRealEmail"),
+      h("p", { className: "hero-copy" }, "Simple private disposable email for your own domains."),
+      h("p", { className: "landing-meta" }, "Built by Mohammed Belfellah. Open source and free to modify."),
       h(
         "div",
         { className: "landing-actions" },
         h("a", { className: "primary-link", href: "/dashboard" }, "Open inbox"),
         h("a", { className: "secondary-link", href: "/admin" }, "Admin"),
         h("a", { className: "secondary-link", href: githubUrl, target: "_blank", rel: "noreferrer" }, "GitHub")
-      ),
-      h(
-        "div",
-        { className: "landing-points" },
-        h("span", null, "Create aliases"),
-        h("span", null, "Read messages"),
-        h("span", null, "Bring your own domains")
       )
     )
   );

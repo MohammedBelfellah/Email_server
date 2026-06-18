@@ -644,40 +644,43 @@ select:focus {
 
 .landing-page {
   align-items: center;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.88), rgba(244,246,247,0.98)),
-    radial-gradient(circle at 18% 15%, rgba(20,116,111,0.14), transparent 30%),
-    radial-gradient(circle at 85% 18%, rgba(24,32,29,0.10), transparent 28%);
+  background: #f8faf9;
   display: flex;
+  justify-content: center;
   min-height: 100vh;
-  padding: 26px;
+  padding: 24px;
+  text-align: center;
 }
 
 .landing-hero {
   margin: 0 auto;
-  max-width: 760px;
-  width: min(760px, 100%);
+  max-width: 680px;
+  width: min(680px, 100%);
 }
 
 .landing-hero h1 {
-  font-size: clamp(42px, 8vw, 82px);
-  line-height: 0.95;
-  margin: 18px 0 16px;
+  color: var(--ink);
+  font-size: clamp(40px, 8vw, 74px);
+  line-height: 1;
+  margin: 0 0 16px;
 }
 
 .landing-meta {
-  color: var(--ink);
-  font-size: 16px;
+  color: var(--muted);
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.5;
-  margin: 0 0 22px;
+  margin: 0 auto 24px;
+  max-width: 560px;
 }
 
 .landing-actions {
+  align-items: center;
+  justify-content: center;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin: 24px 0;
+  margin: 26px 0 0;
 }
 
 .primary-link,
@@ -704,23 +707,6 @@ select:focus {
   background: var(--panel);
   border: 1px solid var(--line);
   color: var(--ink);
-}
-
-.landing-points {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 18px;
-}
-
-.landing-points span {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-  padding: 8px 11px;
 }
 
 .login-hero {
