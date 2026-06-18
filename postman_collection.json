@@ -1,0 +1,70 @@
+{
+  "info": {
+    "name": "Private Email Server",
+    "description": "Local tests for the Node email receiving backend.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "Create Email Alias",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"test\",\n  \"label\": \"Testing inbox\"\n}"
+        },
+        "url": "{{baseUrl}}/api/emails"
+      }
+    },
+    {
+      "name": "List Email Aliases",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/emails"
+      }
+    },
+    {
+      "name": "Ingest Raw Email",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "message/rfc822"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "From: Instagram <security@mail.instagram.com>\nTo: test@belfellah.tech\nSubject: Your Instagram code is 123456\nContent-Type: text/plain; charset=utf-8\n\nHi,\n\nYour verification code is 123456.\n\nThanks.\n"
+        },
+        "url": "{{baseUrl}}/api/ingest/raw"
+      }
+    },
+    {
+      "name": "Read Test Inbox",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/emails/test/messages"
+      }
+    }
+  ]
+}

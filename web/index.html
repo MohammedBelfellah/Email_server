@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Belfellah Inbox</title>
+    <link rel="stylesheet" href="/web/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">B</div>
+          <div>
+            <h1>Belfellah Inbox</h1>
+            <p id="domainLabel">@belfellah.tech</p>
+          </div>
+        </div>
+
+        <form id="loginForm" class="login">
+          <label for="tokenInput">Dashboard key</label>
+          <div class="input-row">
+            <input id="tokenInput" type="password" autocomplete="current-password" placeholder="Paste key">
+            <button type="submit">Unlock</button>
+          </div>
+        </form>
+
+        <form id="aliasForm" class="alias-form">
+          <label for="aliasInput">New address</label>
+          <div class="input-row">
+            <input id="aliasInput" type="text" placeholder="instagram">
+            <button type="submit">Create</button>
+          </div>
+        </form>
+
+        <div class="section-heading">
+          <span>Addresses</span>
+          <button id="refreshAliases" class="icon-button" type="button" title="Refresh addresses">↻</button>
+        </div>
+        <nav id="aliasList" class="alias-list"></nav>
+      </aside>
+
+      <main class="main">
+        <header class="toolbar">
+          <div>
+            <p class="eyebrow">Inbox</p>
+            <h2 id="inboxTitle">Recent messages</h2>
+          </div>
+          <div class="toolbar-actions">
+            <button id="showRecent" type="button">Recent</button>
+            <button id="refreshMessages" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="content-grid">
+          <div class="message-list" id="messageList"></div>
+          <article class="message-detail" id="messageDetail">
+            <div class="empty-state">
+              <h3>Select a message</h3>
+              <p>Choose an email from the list to read the body and headers.</p>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/web/app.js" type="module"></script>
+  </body>
+</html>

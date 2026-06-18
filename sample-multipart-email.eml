@@ -1,0 +1,23 @@
+From: Example <sender@example.com>
+To: htmltest@belfellah.tech
+Subject: HTML email test
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="demo-boundary"
+
+--demo-boundary
+Content-Type: text/plain; charset="UTF-8"
+
+This is the plain text version.
+
+--demo-boundary
+Content-Type: text/html; charset="UTF-8"
+
+<!doctype html>
+<html>
+  <body style="font-family: Arial, sans-serif; padding: 20px;">
+    <h1 style="color: #14746f;">HTML email works</h1>
+    <p>This is the <strong>HTML</strong> version.</p>
+  </body>
+</html>
+
+--demo-boundary--

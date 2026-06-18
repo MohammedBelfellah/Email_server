@@ -1,0 +1,16 @@
+{
+  "name": "private-email-server",
+  "version": "0.1.0",
+  "description": "Private catch-all email receiving backend for belfellah.tech.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node scripts/smoke-test.js",
+    "pipe": "node scripts/postfix-pipe.js",
+    "reparse": "node scripts/reparse-db.js",
+    "migrate:sqlite": "node scripts/migrate-json-to-sqlite.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
